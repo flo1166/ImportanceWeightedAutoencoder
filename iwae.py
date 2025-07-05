@@ -20,12 +20,13 @@ LEARNING_RATE = 1e-3
 #WEIGHT_DECAY = 1e-6
 #SCHEDULER_STEP_SIZE = 50
 #SCHEDULER_GAMMA = 0.5
-NUM_EPOCHS = 3
-LIST_OF_KS = [1,5,50]
-LOG_INTERVAL = 10  # Log every 10 batches
-SAVE_INTERVAL = 1  # Save images every epoch
+NUM_EPOCHS = 1#150
+LIST_OF_KS = [1] #1,5,50
+LOG_INTERVAL = 100  # Log every 100 batches (from approx 3.000)
+SAVE_INTERVAL = 10  # Save images every epoch
 ACTIVE_LATENT_DIM_THRESHOLD = 1e-2
-
+#NORMALISATION =
+INITIALISATION = ['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal']
 
 class Binarized_MNIST(datasets.MNIST):    
     def __init__(self, root, train, transform=None, target_transform=None, download=False):
@@ -35,18 +36,39 @@ class Binarized_MNIST(datasets.MNIST):
         img, target = super().__getitem__(idx)
         return dists.Bernoulli(img).sample().type(torch.float32)
 
-def weights_init(m):
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
+def bias_init(m):
+    if m.bias is not None:
+        nn.init.zeros_(m.bias)
+    return m
 
-def avg_loss_SError(total_loss, total_nll, total_kl, num_batches):
-    avg_loss = np.sum(total_loss) / num_batches
+def weights_init(m, method = 'XavierUni'):
+    if method == 'XavierUni':
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            bias_init(m)
+    elif method == 'XavierNormal':
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_normal_(m.weight)
+            bias_init(m)
+    elif method == 'KaimingUni':
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_uniform_(m.weight)
+            bias_init(m)
+    elif method == 'KaimingNormal':
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight)
+            bias_init(m)
+    elif method == 'TruncNormal':
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight)
+            bias_init(m)
+
+def avg_loss_SError(total_loss, total_nll, total_kl):
+    avg_loss = np.mean(total_loss)
     avg_loss_SE = stats.sem(total_loss)
-    avg_nll = np.sum(total_nll) / num_batches
+    avg_nll = np.mean(total_nll)
     avg_nll_SE = stats.sem(total_nll)
-    avg_kl = np.sum(total_kl) / num_batches
+    avg_kl = np.mean(total_kl)
     avg_kl_SE = stats.sem(total_kl)
     return avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE
 
@@ -54,6 +76,7 @@ class VAE(nn.Module):
     def __init__(self, k):
         super(VAE, self).__init__()
         self.k = k
+        self.model_type = 'VAE'
         self.encoder = nn.Sequential(
             nn.Flatten(),
             nn.Linear(MNIST_SIZE**2, HIDDEN_DIM),  
@@ -202,7 +225,7 @@ class VAE(nn.Module):
         log_w = log_p_x_g_z + log_prior_z - log_q_z_g_x
         # compute marginal log-likelihood        
         log_marginal_likelihood = (torch.logsumexp(log_w, 1) -  np.log(k)).mean()
-        return log_marginal_likelihood, log_w
+        return log_marginal_likelihood, log_w, log_p_x_g_z, log_q_z_g_x, log_prior_z
     
     def sample(self, n_samples, device):
         """Generate samples from prior"""
@@ -221,22 +244,24 @@ class IWAE(VAE):
     
     def __init__(self, k):
         super(IWAE, self).__init__(k)
+        self.model_type = 'IWAE'
         return
     
     def compute_loss(self, x, k=None, mode='original'):
         if not k:
             k = self.k
         # compute unnormalized importance weights in log_units
-        log_likelihood, log_w = self.compute_marginal_log_likelihood(x, k)
+        log_likelihood, log_w, log_p_x_g_z, log_q_z_g_x, log_prior_z = self.compute_marginal_log_likelihood(x, k)
         # loss computation (several ways possible)
         if mode == 'original':
             ####################### ORIGINAL IMPLEMENTAION #######################
             # numerical stability (found in original implementation)
-            # Stabilize weights
-            log_w_max, _ = torch.max(log_w, dim=1, keepdim=True)
-            w_tilde = torch.softmax(log_w - log_w_max, dim=1).detach()
-            # Compute loss (negative IWAE objective)
-            loss = -(w_tilde * log_w).sum(dim=1).mean()
+            log_w_minus_max = log_w - log_w.max(1, keepdim=True)[0]
+            # compute normalized importance weights (no gradient)
+            w = log_w_minus_max.exp()
+            w_tilde = (w / w.sum(axis=1, keepdim=True)).detach()
+            # compute loss (negative IWAE objective)
+            loss = -(w_tilde * log_w).sum(1).mean()
         elif mode == 'normalized weights':
             ######################## LOG-NORMALIZED TRICK ########################
             # copmute normalized importance weights (no gradient)
@@ -244,10 +269,13 @@ class IWAE(VAE):
             w_tilde = log_w_tilde.exp().detach()
             # compute loss (negative IWAE objective)
             loss = -(w_tilde * log_w).sum(1).mean()
-        elif mode == 'fast':
-            ########################## SIMPLE AND FAST ###########################
-            loss = -log_likelihood
-        return loss
+
+        # Calculate reconstruction loss: weighted average of negative log-likelihood
+        recon_loss = -(w_tilde * log_p_x_g_z).sum(1).mean()
+
+        # Calculate KL divergence: weighted average of (log q(z|x) - log p(z))
+        kl_divergence = (w_tilde * (log_q_z_g_x - log_prior_z)).sum(1).mean()
+        return loss, recon_loss, kl_divergence
 
 def evaluate_test_loss(model, test_loader, device, k=None):
     model.eval()
@@ -256,7 +284,7 @@ def evaluate_test_loss(model, test_loader, device, k=None):
     total_kl = []
     num_batches = 0
     num_samples = 0
-    total_time = datetime.now()
+    total_time = time.time()
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(test_loader):
@@ -276,12 +304,50 @@ def evaluate_test_loss(model, test_loader, device, k=None):
             num_batches += 1
             num_samples += x.size(0)
     
-    total_time = total_time - datetime.now()
+    total_time = total_time - time.time()
     
     return total_loss, total_nll, total_kl, total_time, num_samples
 
+def log_activity_scores(writer, activity_scores, epoch, timestamp, model, test = False):
+    """
+    Log activity scores as a bar plot to TensorBoard.
+    
+    Args:
+        writer: SummaryWriter instance.
+        activity_scores: Tensor of shape [latent_dim].
+        epoch: Current training epoch.
+    """
+    plt.rcParams.update({
+        'font.family': 'serif',
+        'font.size': 12,
+        'text.color': 'black',
+        'axes.labelcolor': 'black',
+        'xtick.color': 'black',
+        'ytick.color': 'black',
+        'axes.titlesize': 12,
+        'axes.titleweight': 'normal'
+    })
+
+    plt.figure(figsize=(10, 4))
+    bars = plt.bar(range(len(activity_scores)), activity_scores.cpu().numpy(), color='black')
+
+    plt.xlabel('Latent Dimension')
+    plt.ylabel('Activity Score')
+    plt.title(f'Activity Scores at Epoch {epoch}')
+    plt.grid(axis='y')  # Add horizontal grid lines only
+    plt.tight_layout()
+
+    if test:
+        plt.savefig(f'./results/{timestamp}_{model.model_type}_epoch_dim_acitivity_scores_test_epoch{epoch}.pdf', format='pdf')
+        writer.add_figure('EPOCH_DIM/activity_scores_test', plt.gcf(), global_step=epoch)
+        torch.save(activity_scores,  f'./results/{timestamp}_{model.model_type}_test_latent_matrix_epoch_{epoch}.pt')
+    else:
+        plt.savefig(f'./results/{timestamp}_{model.model_type}_epoch_dim_acitivity_scores_training.pdf', format='pdf')
+        writer.add_figure('EPOCH_DIM/activity_scores_training', plt.gcf(), global_step=epoch)
+        torch.save(activity_scores,  f'./results/{timestamp}_{model.model_type}_training_latent_matrix_epoch_{epoch}.pt')
+
 def helper_tensorboard_loss_batch(writer, loss, NLL, KL_div, total_loss, total_NLL, total_kl_div, batch_idx, batch_start_time, epoch):
-    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div, batch_idx + 1)
+    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div)
 
     writer.add_scalars(f'BATCH_LOSS/Training Loss (NLL + KL Div)', {f'Epoch_{epoch}': loss.item()}, batch_idx)
     writer.add_scalars(f'BATCH_LOSS/Training Loss (NLL)', {f'Epoch_{epoch}': NLL}, batch_idx)
@@ -298,8 +364,8 @@ def helper_tensorboard_loss_batch(writer, loss, NLL, KL_div, total_loss, total_N
     writer.add_scalars(f'BATCH_TIME/Training Time (Minutes)', {f'Epoch_{epoch}': (time.time() - batch_start_time) / 60}, batch_idx)
     #writer.add_scalar(f'BATCH/DIMENSIONS/Active Latent Dimensions', len(active_dims), batch_idx)
 
-def helper_tensorboard_training_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time, active_dims):
-    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div, epoch)
+def helper_tensorboard_training_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time, active_dims, activity_scores, model, timestamp):
+    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div)
     writer.add_scalar('EPOCH_LOSS/Training Loss (NLL + KL Div)', np.sum(total_loss), epoch)
     writer.add_scalar('EPOCH_LOSS/Training Loss (NLL)', np.sum(total_NLL), epoch)
     writer.add_scalar('EPOCH_LOSS/Training Loss (KL Div)', np.sum(total_kl_div), epoch)
@@ -308,16 +374,20 @@ def helper_tensorboard_training_loss(writer, total_loss, total_NLL, total_kl_div
     writer.add_scalar('EPOCH_LOSS/Avg. Training Loss (NLL)', avg_nll, epoch)
     writer.add_scalar('EPOCH_LOSS/Avg. Training Loss (KL Div)', avg_kl, epoch)
 
-    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (NLL + KL Div)', stats.sem(avg_loss_SE), epoch)
-    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (NLL)', stats.sem(avg_nll_SE), epoch)
-    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (KL Div)', stats.sem(avg_kl_SE), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (NLL + KL Div)', stats.sem(total_loss), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (NLL)', stats.sem(total_NLL), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Training Loss (KL Div)', stats.sem(total_kl_div), epoch)
     
     writer.add_scalar('EPOCH_TIME/Training Time (Minutes)', total_time / 60, epoch)
 
-    writer.add_scalar('EPOCH_DIM/Active Latent Dimensions', len(active_dims), epoch)
+    writer.add_scalar('EPOCH_DIM/Active Latent Dimensions - Training', len(active_dims), epoch)
+    image = activity_scores.view(5, 10)
+    image = image.unsqueeze(0)
+    writer.add_image('EPOCH_DIM/Active Latent Dimensions Matrix - Training', image, global_step=epoch)
+    log_activity_scores(writer, activity_scores, epoch, timestamp, model, False)
 
-def helper_tensorboard_test_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time):
-    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div, epoch)
+def helper_tensorboard_test_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time, active_dims, activity_scores, model, timestamp):
+    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div)
     writer.add_scalar('EPOCH_LOSS/Test Loss (NLL + KL Div)', np.sum(total_loss), epoch)
     writer.add_scalar('EPOCH_LOSS/Test Loss (NLL)', np.sum(total_NLL), epoch)
     writer.add_scalar('EPOCH_LOSS/Test Loss (KL Div)', np.sum(total_kl_div), epoch)
@@ -326,11 +396,26 @@ def helper_tensorboard_test_loss(writer, total_loss, total_NLL, total_kl_div, ep
     writer.add_scalar('EPOCH_LOSS/Avg. Test Loss (NLL)', avg_nll, epoch)
     writer.add_scalar('EPOCH_LOSS/Avg. Test Loss (KL Div)', avg_kl, epoch)
 
-    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (NLL + KL Div)', stats.sem(avg_loss_SE), epoch)
-    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (NLL)', stats.sem(avg_nll_SE), epoch)
-    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (KL Div)', stats.sem(avg_kl_SE), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (NLL + KL Div)', stats.sem(total_loss), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (NLL)', stats.sem(total_NLL), epoch)
+    writer.add_scalar('EPOCH_LOSS/Standard Error Test Loss (KL Div)', stats.sem(total_kl_div), epoch)
     
     writer.add_scalar('EPOCH_TIME/Test Time (Minutes)', total_time / 60, epoch)
+
+    writer.add_scalar('EPOCH_DIM/Active Latent Dimensions - Test', len(active_dims), epoch)
+    image = activity_scores.view(5, 10)
+    image = image.unsqueeze(0)
+    writer.add_image('EPOCH_DIM/Active Latent Dimensions Matrix - Test', image, global_step=epoch)
+    log_activity_scores(writer, activity_scores, epoch, timestamp, model, True)
+
+def helper_tensorboard_test_snr(writer, overall_snr_db, snr_per_dim_db, mean_snr_db, overall_snr_db_test, snr_per_dim_db_test, mean_snr_db_test, epoch):
+    writer.add_scalar('SNR/Test Overall SNR', overall_snr_db_test, epoch)
+    writer.add_scalar('SNR/Test per DIM SNR', snr_per_dim_db_test, epoch)
+    writer.add_scalar('SNR/Test Mean SNR', mean_snr_db_test, epoch)
+
+    writer.add_scalar('SNR/Training Overall SNR', overall_snr_db, epoch)
+    writer.add_scalar('SNR/Training per DIM SNR', snr_per_dim_db, epoch)
+    writer.add_scalar('SNR/Training Mean SNR', mean_snr_db, epoch)
 
 def create_comparison_image(original, reconstructed, n_images=8):
     """Create side-by-side comparison of original and reconstructed images"""
@@ -388,7 +473,47 @@ def compute_activity_paper_method(model, data_loader, device, threshold, n_batch
     
     return activity_scores, active_dims, all_posterior_means
 
-def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, writer, optimizer, fixed_tensorboard_batch, scheduler):
+def latent_snr(model, data_loader, device):
+    model.eval()
+    all_mu = []
+    all_logvar = []
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            x = batch[0].to(device) if isinstance(batch, (list, tuple)) else batch.to(device)
+            [x_tilde, z, mu_z, log_var_z] = model.forward(x)
+            
+            # Average over k samples
+            mu_avg = mu_z.mean(dim=1)  # [batch, latent_dim]
+            logvar_avg = log_var_z.mean(dim=1)
+            
+            all_mu.append(mu_avg)
+            all_logvar.append(logvar_avg)
+    
+    all_mu = torch.cat(all_mu, dim=0)  # [total_samples, latent_dim]
+    all_logvar = torch.cat(all_logvar, dim=0)
+    
+    # Signal: variance of the mean across all samples
+    signal_var = torch.var(all_mu, dim=0)  # [latent_dim]
+    
+    # Noise: average predicted variance
+    noise_var = torch.exp(all_logvar).mean(dim=0)  # [latent_dim]
+    
+    # SNR per latent dimension
+    snr_per_dim = signal_var / noise_var
+    snr_db_per_dim = 10 * torch.log10(snr_per_dim)
+    
+    # Overall SNR
+    overall_snr = signal_var.mean() / noise_var.mean()
+    overall_snr_db = 10 * torch.log10(overall_snr)
+    
+    return {
+        'overall_snr_db': overall_snr_db.item(),
+        'snr_per_dim_db': snr_db_per_dim.cpu().numpy(),
+        'mean_snr_db': snr_db_per_dim.mean().item()
+    }
+
+def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, writer, optimizer, fixed_tensorboard_batch, scheduler, SNR_bool, timestamp):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Device: {device}')
 
@@ -418,11 +543,11 @@ def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, write
             optimizer.step()
 
             total_loss.append(loss.item())
-            total_NLL.append(NLL)
-            total_kl_div.append(KL_div)
+            total_NLL.append(NLL.item())
+            total_kl_div.append(KL_div.item())
             total_time += time.time() - batch_start_time
 
-            if batch_idx + 1 % LOG_INTERVAL == 0:
+            if (batch_idx + 1) % LOG_INTERVAL == 0:
                 helper_tensorboard_loss_batch(writer, loss, NLL, KL_div, total_loss, total_NLL, total_kl_div, batch_idx, batch_start_time, epoch)
 
             loop.set_description(f'Epoch [{epoch}/{num_epochs}]')
@@ -433,10 +558,11 @@ def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, write
         scheduler.step()
         epoch_times.append(time.time() - epoch_start_time)
 
-        # Post-epoch evaluations
-        activity_scores, active_dims, all_posterior_means = compute_activity_paper_method(model, data_loader, device, ACTIVE_LATENT_DIM_THRESHOLD, 5)
+        # evaluations
+        activity_scores, active_dims, all_posterior_means = compute_activity_paper_method(model, data_loader, device, ACTIVE_LATENT_DIM_THRESHOLD, None)
 
-        helper_tensorboard_training_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time, active_dims)
+        helper_tensorboard_training_loss(writer, total_loss, total_NLL, total_kl_div, epoch, total_time, active_dims, activity_scores, model, timestamp)
+      
 
         # Log images every SAVE_INTERVAL epochs
         if epoch % SAVE_INTERVAL == 0:
@@ -457,14 +583,17 @@ def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, write
                     traversal_flat = traversal_images.view(-1, 1, 28, 28)
                     writer.add_images('Latent_Traversal', traversal_flat, epoch, dataformats='NCHW')
 
-    # Log hyperparameters and final loss
-    hparams = {'learning rate': lr, 'epochs': num_epochs, 'k': K}
-    writer.add_hparams(hparams, {'NLL': np.mean(total_loss)})
+            if SNR_bool:
+                overall_snr_db, snr_per_dim_db, mean_snr_db = latent_snr(model, data_loader, device)
+                overall_snr_db_test, snr_per_dim_db_test, mean_snr_db_test = latent_snr(model, data_loader_test, device)
+                helper_tensorboard_test_snr(writer, overall_snr_db, snr_per_dim_db, mean_snr_db, overall_snr_db_test, snr_per_dim_db_test, mean_snr_db_test, epoch)
+        
+        activity_scores_test, active_dims_test, all_posterior_means_test = compute_activity_paper_method(model, data_loader_test, device, ACTIVE_LATENT_DIM_THRESHOLD, None)
+        total_loss_eval, total_nll_eval, total_kl_eval, total_time_eval, num_samples_eval = evaluate_test_loss(model, data_loader_test, device, k=model.k)
+        helper_tensorboard_test_loss(writer, total_loss_eval, total_nll_eval, total_kl_eval, epoch, total_time_eval, active_dims_test, activity_scores_test, model, timestamp)
+        torch.save(activity_scores_test,  f'./results/{timestamp}_{model.model_type}_test_latent_matrix_epoch_{epoch}.pt')
 
-    total_loss_eval, total_nll_eval, total_kl_eval, total_time_eval, num_samples_eval = evaluate_test_loss(model, data_loader_test, device, k=model.k)
-    helper_tensorboard_test_loss(writer, total_loss_eval, total_nll_eval, total_kl_eval, epoch, total_time_eval)
-
-    return model
+    return model, total_loss, total_NLL, total_kl_div
 
 def lr_lambda(epoch):
     # Determine which phase the current epoch belongs to
@@ -483,8 +612,8 @@ def train_paper(dataset, dataset_test, vae_model, iwae_model, lr, num_epochs, K)
     print('Device: {}'.format(device))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = f"runs/VAE_experiment_{timestamp}_{lr}_{num_epochs}_{K}"
-    log_dir2 = f"runs/IWAE_experiment_{timestamp}_{lr}_{num_epochs}_{K}"
+    log_dir = f"runs/VAE_experiment_{timestamp}_{lr}_{num_epochs}_{K}_{BATCH_SIZE}_{ACTIVE_LATENT_DIM_THRESHOLD}"
+    log_dir2 = f"runs/IWAE_experiment_{timestamp}_{lr}_{num_epochs}_{K}_{BATCH_SIZE}_{ACTIVE_LATENT_DIM_THRESHOLD}"
     writer_vae = SummaryWriter(log_dir)
     writer_iwae = SummaryWriter(log_dir2)
 
@@ -505,19 +634,55 @@ def train_paper(dataset, dataset_test, vae_model, iwae_model, lr, num_epochs, K)
     # Fixed test batch for consistent visualization
     fixed_test_batch = next(iter(data_loader_test)).to(device)
     
-    vae_model = train_general(data_loader, data_loader_test, vae_model, lr, num_epochs, K, writer_vae, optimizer_vae, fixed_test_batch, scheduler_vae)
-    #iwae_model = train_general(data_loader, data_loader_test, iwae_model, lr, num_epochs, K, writer_iwae, optimizer_iwae, fixed_test_batch, scheduler_iwae)
+    vae_model, total_loss, total_NLL, total_kl_div = train_general(data_loader, data_loader_test, vae_model, lr, num_epochs, K, writer_vae, optimizer_vae, fixed_test_batch, scheduler_vae, False, timestamp)
+    #iwae_model, total_loss_iwae, total_NLL_iwae, total_kl_div_iwae = train_general(data_loader, data_loader_test, iwae_model, lr, num_epochs, K, writer_iwae, optimizer_iwae, fixed_test_batch, scheduler_iwae, False, timestamp)
     
-    torch.save(vae_model, f'./results/trained_vae_{timestamp}_{LEARNING_RATE}_{NUM_EPOCHS}_{k}.pth')
-    torch.save(iwae_model, f'./results/trained_iwae_{timestamp}_{LEARNING_RATE}_{NUM_EPOCHS}_{k}.pth')
+    torch.save(vae_model, f'./results/trained_vae_{timestamp}_{LEARNING_RATE}_{NUM_EPOCHS}_{k}_{BATCH_SIZE}_{ACTIVE_LATENT_DIM_THRESHOLD}.pth')
+    #torch.save(iwae_model, f'./results/trained_iwae_{timestamp}_{LEARNING_RATE}_{NUM_EPOCHS}_{k}_{BATCH_SIZE}_{ACTIVE_LATENT_DIM_THRESHOLD}.pth')
 
-#n_samples = 7
+    writer_vae.flush() 
+    time.sleep(0.1)
+    writer_vae.close()
+    writer_iwae.flush() 
+    time.sleep(0.1)
+    writer_iwae.close()
+    return vae_model, total_loss, total_NLL, total_kl_div, timestamp#, total_loss_iwae, total_NLL_iwae, total_kl_div_iwae
+
 binarized_MNIST = Binarized_MNIST('./data', train=True, download=True,
                                   transform=transforms.ToTensor())
 binarized_MNIST_Test = Binarized_MNIST('./data', train=False, download=True,
                                   transform=transforms.ToTensor())
+
+global_step = 0
 for k in LIST_OF_KS:
     vae_model = VAE(k)
     iwae_model = IWAE(k)
-    train_paper(binarized_MNIST, binarized_MNIST_Test, vae_model, iwae_model, LEARNING_RATE, NUM_EPOCHS, k)
+
+    # Log hyperparameters and final loss
+    '''
+    hparams = {
+        'learning rate': float(LEARNING_RATE), 
+        'epochs': int(NUM_EPOCHS), 
+        'k': int(k)
+        }
+    '''
     
+    vae_model, total_loss, total_NLL, total_kl_div, timestamp = train_paper(binarized_MNIST, binarized_MNIST_Test, vae_model, iwae_model, LEARNING_RATE, NUM_EPOCHS, k)
+
+    '''
+    avg_loss, avg_loss_SE, avg_nll, avg_nll_SE, avg_kl, avg_kl_SE = avg_loss_SError(total_loss, total_NLL, total_kl_div)
+    metrics = {
+        'hparam/final_loss': float(avg_loss),
+        'hparam/final_NLL': float(avg_nll),  
+        'hparam/final_KL': float(avg_kl)
+        }  
+    
+    hparam_log_dir = f'runs/hparams/{timestamp}_{vae_model.model_type}__lr_{LEARNING_RATE}_K_{k}_{BATCH_SIZE}_{ACTIVE_LATENT_DIM_THRESHOLD}'
+    hparam_writer = SummaryWriter(log_dir=hparam_log_dir)
+    hparam_writer.add_hparams(hparams, metrics, global_step = global_step)
+    hparam_writer.flush() 
+    time.sleep(0.1)
+    hparam_writer.close()
+
+    global_step += 1 
+    '''
