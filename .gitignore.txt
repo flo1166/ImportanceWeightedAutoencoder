@@ -1,0 +1,4 @@
+# Ignore data, results, and runs folders
+data/
+results/
+runs/

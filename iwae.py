@@ -28,8 +28,8 @@ LOG_INTERVAL = 100  # Log every 100 batches (from approx 3.000)
 SAVE_INTERVAL = 10  # Save images every 10. epoch
 ACTIVE_LATENT_DIM_THRESHOLD = 1e-2
 #NORMALISATION =
-INITIALISATION = ['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal', 'TruncNormal']
-SEEDS = [135,630,924,10,32]
+INITIALISATION = ['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal']#['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal', 'TruncNormal']
+SEEDS = [924,10,32]#[135,630,924,10,32]
 
 def set_seed(seed=42):
     """
@@ -241,12 +241,12 @@ class VAE(nn.Module):
 
         x = x.unsqueeze(1)
         # compute logarithmic unnormalized importance weights [batch, k]       
-        log_p_x_g_z = dists.Bernoulli(x_tilde).log_prob(x).sum(axis=(2, 3, 4))
-        log_prior_z = dists.Normal(0, 1).log_prob(z).sum(2)
-        log_q_z_g_x = dists.Normal(mu_z, std_z).log_prob(z).sum(2)
+        log_p_x_g_z = dists.Bernoulli(x_tilde).log_prob(x).sum(dim=(2, 3, 4))
+        log_prior_z = dists.Normal(0, 1).log_prob(z).sum(dim=2)
+        log_q_z_g_x = dists.Normal(mu_z, std_z).log_prob(z).sum(dim=2)
         log_w = log_p_x_g_z + log_prior_z - log_q_z_g_x
         # compute marginal log-likelihood        
-        log_marginal_likelihood = (torch.logsumexp(log_w, 1) -  np.log(k)).mean()
+        log_marginal_likelihood = (torch.logsumexp(log_w, dim=1) -  np.log(k)).mean()
         return log_marginal_likelihood, log_w, log_p_x_g_z, log_q_z_g_x, log_prior_z
     
     def sample(self, n_samples, device):
@@ -564,8 +564,8 @@ def train_general(data_loader, data_loader_test, model, lr, num_epochs, K, write
             total_kl_div.append(KL_div.item())
             total_time += time.time() - batch_start_time
 
-            if (batch_idx + 1) % LOG_INTERVAL == 0:
-                helper_tensorboard_loss_batch(writer, loss, NLL, KL_div, total_loss, total_NLL, total_kl_div, batch_idx, batch_start_time, epoch)
+            #if (batch_idx + 1) % LOG_INTERVAL == 0:
+            #    helper_tensorboard_loss_batch(writer, loss, NLL, KL_div, total_loss, total_NLL, total_kl_div, batch_idx, batch_start_time, epoch)
 
             loop.set_description(f'Epoch [{epoch}/{num_epochs}]')
             loop.set_postfix(loss=loss.item())
@@ -694,8 +694,8 @@ def train_experiment_active_latent_dimensions(dataset, dataset_test, vae_model, 
     # Fixed test batch for consistent visualization
     fixed_test_batch = next(iter(data_loader_test)).to(device)
     
-    vae_model = train_general(data_loader, data_loader_test, vae_model, lr, num_epochs, K, writer_vae, optimizer_vae, fixed_test_batch, scheduler_vae, True, timestamp, filename_hyperparameters_vae)
-    iwae_model = train_general(data_loader, data_loader_test, iwae_model, lr, num_epochs, K, writer_iwae, optimizer_iwae, fixed_test_batch, scheduler_iwae, True, timestamp, filename_hyperparameters_iwae)
+    vae_model = train_general(data_loader, data_loader_test, vae_model, lr, num_epochs, K, writer_vae, optimizer_vae, fixed_test_batch, scheduler_vae, False, timestamp, filename_hyperparameters_vae)
+    iwae_model = train_general(data_loader, data_loader_test, iwae_model, lr, num_epochs, K, writer_iwae, optimizer_iwae, fixed_test_batch, scheduler_iwae, False, timestamp, filename_hyperparameters_iwae)
     
     torch.save(vae_model, f'./results/trained_vae_{filename_hyperparameters_vae}.pth')
     torch.save(iwae_model, f'./results/trained_iwae_{filename_hyperparameters_iwae}.pth')
@@ -710,7 +710,17 @@ binarized_MNIST = Binarized_MNIST('./data', train=True, download=True,
                                   transform=transforms.ToTensor())
 binarized_MNIST_Test = Binarized_MNIST('./data', train=False, download=True,
                                   transform=transforms.ToTensor())
-
+'''
+#global_step = 0
+for seed in [135]:
+    set_seed(seed)
+    for k in [1]:
+        for m in ['XavierUni']:
+            vae_model = VAE(k, m)
+            iwae_model = IWAE(k, m)
+            train_experiment_active_latent_dimensions(binarized_MNIST, binarized_MNIST_Test, vae_model, iwae_model, LEARNING_RATE, NUM_EPOCHS, k, m, seed)
+'''
+'''
 #global_step = 0
 for seed in SEEDS:
     set_seed(seed)
@@ -719,7 +729,7 @@ for seed in SEEDS:
             vae_model = VAE(k, m)
             iwae_model = IWAE(k, m)
             train_experiment_active_latent_dimensions(binarized_MNIST, binarized_MNIST_Test, vae_model, iwae_model, LEARNING_RATE, NUM_EPOCHS, k, m, seed)
-
+'''
 
 '''
 for k in LIST_OF_KS:
@@ -753,3 +763,11 @@ for k in LIST_OF_KS:
 
     global_step += 1 
     '''
+#global_step = 0
+for seed in SEEDS:
+    set_seed(seed)
+    for k in LIST_OF_KS:
+        for m in INITIALISATION:
+            vae_model = VAE(k, m)
+            iwae_model = IWAE(k, m)
+            train_experiment_active_latent_dimensions(binarized_MNIST, binarized_MNIST_Test, vae_model, iwae_model, LEARNING_RATE, NUM_EPOCHS, k, m, seed)
