@@ -2,3 +2,20 @@
 data
 results
 runs
+experiment_results/PyTorch_Trained_Models/Test_Run_Epoch_Setting/IWAE_5_Test_Loss_NLL_KL.csv
+iwae_latent_heatmap_k1.pdf
+iwae_latent_heatmap_k5.pdf
+Latent Dimensions Overview (K = 1).pdf
+Latent Dimensions Overview (K = 5).pdf
+nll_kl_active_dim_plot.pdf
+nll_kl_active_dim_subplots.pdf
+outsourced_iwae.py
+tensorboard
+test_optim_tensorboard.py
+test_optim.py
+test_tensorboard.py
+test.py
+testPytorchFIle.py
+vae_iwae_active_dim_comparison.pdf
+vae_iwae_active_dim_k1.pdf
+vae_iwae_active_dim_k5.pdf
