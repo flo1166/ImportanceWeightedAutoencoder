@@ -1,0 +1,17 @@
+Model,k,Initialization_Method,Measure,n_seeds,Seeds_Used,Matrix_Shape
+IWAE,1,KaimingNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,1,KaimingUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,1,XavierNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,1,XavierUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,5,KaimingNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,5,KaimingUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,5,XavierNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+IWAE,5,XavierUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,1,KaimingNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,1,KaimingUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,1,XavierNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,1,XavierUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,5,KaimingNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,5,KaimingUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,5,XavierNormal,Latent_Matrix,5,"135, 630, 924, 10, 32",50
+VAE,5,XavierUni,Latent_Matrix,5,"135, 630, 924, 10, 32",50
