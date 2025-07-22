@@ -23,6 +23,9 @@ IWAE consistently learns more active latent dimensions than VAE when using multi
 Weight initialization methods (Xavier vs. He) show minimal impact on active latent dimension counts, with differences falling within experimental variance
 While the total number of active latent dimensions remains stable across seeds (~20.2 ± 0.2), individual dimension selection varies significantly, suggesting stochastic training and optimization effects.
 
+## Important
+Found issue in borea17 implementation where I tensor is cast wrongly when k=1. VAE and IWAE should equal in results. I corrected it in my script. Nevertheless there is still a issue, which I thought of stochastical reasoning.
+
 ## Experimental Setup
 
 * Dataset: Binarized MNIST
