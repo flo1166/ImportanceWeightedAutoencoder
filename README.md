@@ -25,15 +25,15 @@ While the total number of active latent dimensions remains stable across seeds (
 
 ## Experimental Setup
 
-Dataset: Binarized MNIST
-Architecture: Two-layer encoder/decoder with tanh activation
-Latent dimensions: 50
-Importance samples: k ∈ [1, 5]
-Weight initializations: Xavier Normal/Uniform, He Normal/Uniform
-Training epochs: 80
-Random seeds: [135, 630, 924, 10, 32]
+* Dataset: Binarized MNIST
+* Architecture: Two-layer encoder/decoder with tanh activation
+* Latent dimensions: 50
+* Importance samples: k ∈ [1, 5]
+* Weight initializations: Xavier Normal/Uniform, He Normal/Uniform
+* Training epochs: 80
+* Random seeds: [135, 630, 924, 10, 32]
 
 ## References
 For the theoretical foundation and original IWAE framework, please refer to:
-Burda, Y., Grosse, R., & Salakhutdinov, R. (2016). Importance Weighted Autoencoders. International Conference on Learning Representations (ICLR).
+*Burda, Y., Grosse, R., & Salakhutdinov, R. (2016). Importance Weighted Autoencoders. International Conference on Learning Representations (ICLR).*
 This work builds upon and extends the experimental validation of the importance weighting mechanism in deep latent variable models.
