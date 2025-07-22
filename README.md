@@ -4,9 +4,10 @@ This repository contains code and resources for experiments conducted to explore
 The experiments are designed to investigate specific aspects of the IWAE framework and validate theoretical claims:
 
 **Experiment 1: Active Latent Dimensions and Weight Initialization Methods**
-* Objective: Investigate whether different weight initialization methods (Xavier vs. He, Uniform vs. Normal) lead to different total numbers of active latent dimensions in VAE and IWAE models. 
+* Objective: Investigate whether different weight initialization methods (Xavier vs. He, Uniform vs. Normal) lead to different total numbers of active latent dimensions in VAE and IWAE models.
+
 **Experiment 2: Sensitivity of Active Latent Dimensions Across Random Seeds**
-*Objective: Analyze the variability of specific active latent dimensions across different random seeds to understand whether the selection of active dimensions is deterministic or stochastic. 
+* Objective: Analyze the variability of specific active latent dimensions across different random seeds to understand whether the selection of active dimensions is deterministic or stochastic. 
 
 ## Repository Contents
 
