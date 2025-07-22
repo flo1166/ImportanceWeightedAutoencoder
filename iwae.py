@@ -28,8 +28,8 @@ LOG_INTERVAL = 100  # Log every 100 batches (from approx 3.000)
 SAVE_INTERVAL = 10  # Save images every 10. epoch
 ACTIVE_LATENT_DIM_THRESHOLD = 1e-2
 #NORMALISATION =
-INITIALISATION = ['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal']#['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal', 'TruncNormal']
-SEEDS = [924,10,32]#[135,630,924,10,32]
+INITIALISATION = ['XavierUni', 'XavierNormal', 'KaimingUni', 'KaimingNormal', 'TruncNormal']
+SEEDS = [135,630,924,10,32]
 
 def set_seed(seed=42):
     """
@@ -233,12 +233,14 @@ class VAE(nn.Module):
         if not k:
             k = self.k
         x_tilde, z, mu_z, log_var_z = self.forward(x, k)
-
+        
+        # FIX: Remove the extra dimension from x_tilde
+        x_tilde = x_tilde.squeeze(2)  # [20, 1, 1, 28, 28] -> [20, 1, 28, 28]
+        
         # upsample mu_z, std_z, x_s
         mu_z = mu_z.unsqueeze(1)  # [batch, 1, latent_dim]
         log_var_z = log_var_z.unsqueeze(1)  # [batch, 1, latent_dim]
         std_z = torch.exp(0.5 * log_var_z)
-
         x = x.unsqueeze(1)
         # compute logarithmic unnormalized importance weights [batch, k]       
         log_p_x_g_z = dists.Bernoulli(x_tilde).log_prob(x).sum(dim=(2, 3, 4))
