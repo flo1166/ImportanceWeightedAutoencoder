@@ -20,7 +20,7 @@ Other files:
 
 IWAE consistently learns more active latent dimensions than VAE when using multiple importance samples (k=5), confirming superior latent space utilization
 Weight initialization methods (Xavier vs. He) show minimal impact on active latent dimension counts, with differences falling within experimental variance
-While the total number of active latent dimensions remains stable across seeds (~20.2 ± 0.2), individual dimension selection varies significantly, suggesting stochastic optimization effects
+While the total number of active latent dimensions remains stable across seeds (~20.2 ± 0.2), individual dimension selection varies significantly, suggesting stochastic training and optimization effects.
 
 ## Experimental Setup
 
